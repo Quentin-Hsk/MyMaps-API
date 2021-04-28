@@ -19,6 +19,29 @@ const storage = new Storage();
 
 const bucket = storage.bucket("my_maps_avatar_bucket");
 
+async function retrieveTimeline(userId) {
+  const ancestoreKey = datastore.key(["user", userId]);
+  const query = datastore.createQuery("timeline").hasAncestor(ancestoreKey);
+  const saved = await datastore.runQuery(query);
+  console.log("TL recup:", saved);
+  return saved[0];
+}
+
+async function addTimeline(timeline) {
+  const timelineKey = datastore.key(["user", timeline.userId, "timeline"]);
+  const timelineEntity = {
+    origin: timeline.origin,
+    destination: timeline.destination,
+    time: timeline.time,
+    sub: false,
+  };
+  const entity = {
+    key: timelineKey,
+    data: timelineEntity,
+  };
+  await datastore.insert(entity);
+}
+
 async function retrieveUser(email, password) {
   const passwdHash = crypto.createHash("sha256").update(password).digest("hex");
   const query = datastore
@@ -27,6 +50,25 @@ async function retrieveUser(email, password) {
     .filter("password", "=", passwdHash);
   const users = await datastore.runQuery(query);
   return users[0][0];
+}
+
+async function editUser(user) {
+  const userKey = datastore.key(["user", datastore.int(user.id)]);
+  user.password = crypto
+    .createHash("sha256")
+    .update(user.password)
+    .digest("hex");
+  const DSuser = {
+    email: user.email,
+    username: user.username,
+    avatar: user.avatar,
+    password: user.password,
+  };
+  const entity = {
+    key: userKey,
+    data: DSuser,
+  };
+  await datastore.update(entity);
 }
 
 async function createUser(user) {
@@ -40,6 +82,18 @@ async function createUser(user) {
     data: user,
   };
   await datastore.insert(entity);
+}
+
+function isValidHttpUrl(string) {
+  let url;
+
+  try {
+    url = new URL(string);
+  } catch (_) {
+    return false;
+  }
+
+  return url.protocol === "http:" || url.protocol === "https:";
 }
 
 app.get("/", (req, res) => {
@@ -56,8 +110,6 @@ app.get("/login", (req, res) => {
         avatar: user.avatar,
         username: user.username,
         email: user.email,
-        firstname: user.firstname,
-        lastname: user.lastname,
         id: user[Datastore.KEY].id,
       };
       res.status(200);
@@ -72,24 +124,134 @@ app.get("/login", (req, res) => {
 app.post("/signup", (req, res) => {
   let avatar = "";
 
-  if (req.body.avatar) {
+  if (req.body.avatar != null) {
     const file = bucket.file(req.body.username + "-avatar.jpg");
-    file.save(req.body.avatar, function (err) {
+    const tmp = Buffer.from(
+      req.body.avatar.replace(/^data:image\/(png|gif|jpeg);base64,/, ""),
+      "base64"
+    );
+    file.save(tmp, function (err) {
       if (!err) {
         // File written successfully.
         avatar = file.publicUrl();
+
+        const user = { ...req.body, avatar };
+        createUser(user).then(
+          () => {
+            res.status(200);
+            res.send("Success");
+          },
+          (resp) => {
+            console.log(resp);
+            res.status(500);
+            res.send("Failure");
+          }
+        );
       }
     });
+  } else {
+    const user = { ...req.body, avatar };
+    createUser(user).then(
+      () => {
+        res.status(200);
+        res.send("Success");
+      },
+      (resp) => {
+        console.log(resp);
+        res.status(500);
+        res.send("Failure");
+      }
+    );
   }
+});
 
-  const user = { ...req.body, avatar };
-  createUser(user).then(
+app.post("/editProfil", (req, res) => {
+  let avatar = "";
+
+  if (req.body.avatar != null && !isValidHttpUrl(req.body.avatar)) {
+    const file = bucket.file(req.body.username + "-avatar.jpg");
+    const tmp = Buffer.from(
+      req.body.avatar.replace(/^data:image\/(png|gif|jpeg);base64,/, ""),
+      "base64"
+    );
+    file.save(tmp, function (err) {
+      if (!err) {
+        // File written successfully.
+        avatar = file.publicUrl();
+
+        const user = { ...req.body, avatar };
+        editUser(user).then(
+          () => {
+            res.status(200);
+            res.send("Success");
+          },
+          (resp) => {
+            console.log(resp);
+            res.status(500);
+            res.send("Failure");
+          }
+        );
+      }
+    });
+  } else if (isValidHttpUrl(req.body.avatar)) {
+    const user = { ...req.body };
+    editUser(user).then(
+      () => {
+        res.status(200);
+        res.send("Success");
+      },
+      (resp) => {
+        console.log(resp);
+        res.status(500);
+        res.send("Failure");
+      }
+    );
+  } else {
+    const user = { ...req.body, avatar };
+    editUser(user).then(
+      () => {
+        res.status(200);
+        res.send("Success");
+      },
+      (resp) => {
+        console.log(resp);
+        res.status(500);
+        res.send("Failure");
+      }
+    );
+  }
+});
+
+app.get("/getTimelines", (req, res) => {
+  const userId = req.query.userId;
+  retrieveTimeline(userId).then((timelines) => {
+    if (timelines != null) {
+      const dataTL = timelines.map((tl) => {
+        const timeline = {
+          time: tl.time,
+          sub: tl.sub,
+          destination: tl.destination,
+          origin: tl.origin,
+          id: tl[Datastore.KEY].id,
+        };
+        return timeline;
+      });
+      res.status(200);
+      res.json(dataTL);
+    } else {
+      res.status(401);
+      res.send("Timelines not found !");
+    }
+  });
+});
+
+app.post("/addTimeline", (req, res) => {
+  addTimeline(req.body).then(
     () => {
       res.status(200);
       res.send("Success");
     },
-    (resp) => {
-      console.log(resp);
+    () => {
       res.status(500);
       res.send("Failure");
     }
